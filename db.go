@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -165,16 +166,47 @@ func prepareQuery(query string) string {
 	return query
 }
 
-func insertEncounter(db *sql.DB, encounterID, title, duration, playerName, job, dps, healing, damageTaken, deaths string) error {
-	insertSQL := `INSERT INTO encounters (encounter_id, encounter_title, duration, player_name, job, dps, healing, damage_taken, deaths) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	insertSQL = prepareQuery(insertSQL)
-	_, err := db.Exec(insertSQL, encounterID, title, duration, playerName, job, dps, healing, damageTaken, deaths)
-	return err
+func executeDBWithRetry(db **sql.DB, cfg *DatabaseConfig, operation func(*sql.DB) error) error {
+	if *db == nil {
+		newDB, err := initDB(cfg)
+		if err != nil {
+			return fmt.Errorf("database connection unavailable and reconnect failed: %v", err)
+		}
+		*db = newDB
+	}
+
+	err := operation(*db)
+	if err == nil {
+		return nil
+	}
+
+	log.Printf("Database operation failed: %v. Attempting to reconnect...", err)
+	(*db).Close()
+	
+	newDB, err := initDB(cfg)
+	if err != nil {
+		*db = nil
+		return fmt.Errorf("reconnect failed: %v", err)
+	}
+	*db = newDB
+
+	return operation(*db)
 }
 
-func insertTravelLog(db *sql.DB, zoneID int, zoneName string) error {
-	insertSQL := `INSERT INTO travel_log (zone_id, zone_name) VALUES (?, ?)`
-	insertSQL = prepareQuery(insertSQL)
-	_, err := db.Exec(insertSQL, zoneID, zoneName)
-	return err
+func insertEncounter(db **sql.DB, cfg *DatabaseConfig, encounterID, title, duration, playerName, job, dps, healing, damageTaken, deaths string) error {
+	return executeDBWithRetry(db, cfg, func(d *sql.DB) error {
+		insertSQL := `INSERT INTO encounters (encounter_id, encounter_title, duration, player_name, job, dps, healing, damage_taken, deaths) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		insertSQL = prepareQuery(insertSQL)
+		_, err := d.Exec(insertSQL, encounterID, title, duration, playerName, job, dps, healing, damageTaken, deaths)
+		return err
+	})
+}
+
+func insertTravelLog(db **sql.DB, cfg *DatabaseConfig, zoneID int, zoneName string) error {
+	return executeDBWithRetry(db, cfg, func(d *sql.DB) error {
+		insertSQL := `INSERT INTO travel_log (zone_id, zone_name) VALUES (?, ?)`
+		insertSQL = prepareQuery(insertSQL)
+		_, err := d.Exec(insertSQL, zoneID, zoneName)
+		return err
+	})
 }
