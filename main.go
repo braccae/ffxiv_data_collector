@@ -21,10 +21,15 @@ type SubscribeMessage struct {
 
 func main() {
 	debug := flag.Bool("debug", false, "Print raw events")
+	portable := flag.Bool("portable", false, "Use config from local directory")
 	flag.Parse()
 
-	dbFile := "ffxiv_events.db"
-	db, err := initDB(dbFile)
+	cfg, err := loadConfig(*portable)
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	db, err := initDB(&cfg.Database)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
@@ -33,7 +38,7 @@ func main() {
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, os.Interrupt)
 
-	u := "ws://127.0.0.1:10501/ws"
+	u := cfg.WebSocketURL
 	log.Printf("Connecting to %s", u)
 
 	c, _, err := websocket.DefaultDialer.Dial(u, nil)

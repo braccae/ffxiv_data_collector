@@ -1,0 +1,89 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*.*.*" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}/${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    
+    # Require manual approval for PRs by using an environment.
+    # Note: You must create an environment named "pr-build" in your GitHub Repository Settings
+    # and configure it to require reviewers.
+    environment: ${{ github.event_name == 'pull_request' && 'pr-build' || '' }}
+    
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+          - os: linux
+            arch: arm64
+          - os: darwin
+            arch: amd64
+          - os: darwin
+            arch: arm64
+          - os: windows
+            arch: amd64
+          - os: windows
+            arch: arm64
+            
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: 'go.mod'
+        check-latest: true
+        
+    - name: Build
+      env:
+        GOOS: ${{ matrix.os }}
+        GOARCH: ${{ matrix.arch }}
+        CGO_ENABLED: 0 # Required for pure Go cross-compilation
+      run: |
+        OUTPUT_NAME="ffxiv_data_collector_${{ matrix.os }}_${{ matrix.arch }}"
+        if [ "$GOOS" = "windows" ]; then
+          OUTPUT_NAME="${OUTPUT_NAME}.exe"
+        fi
+        
+        go build -v -o "$OUTPUT_NAME" .
+      shell: bash
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ffxiv_data_collector-${{ matrix.os }}-${{ matrix.arch }}
+        path: ffxiv_data_collector_*
+        if-no-files-found: error
+
+  release:
+    name: Create Release
+    needs: build
+    # Only run release on pushes (to main or a tag) or manual triggers, NOT on PRs
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+          
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # Use the tag name if pushed, otherwise generate a development release name
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v0.0.{0}-alpha', github.run_number) }}
+          name: ${{ github.ref_type == 'tag' && github.ref_name || format('Development Build {0}', github.run_number) }}
+          files: artifacts/*
+          generate_release_notes: true
