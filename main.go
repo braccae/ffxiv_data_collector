@@ -8,11 +8,27 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+type PlayerStats struct {
+	Job         string
+	Damage      int64
+	Healed      int64
+	DamageTaken int64
+	Deaths      int64
+}
+
+func parseInt(s string) int64 {
+	s = strings.ReplaceAll(s, ",", "")
+	f, _ := strconv.ParseFloat(s, 64)
+	return int64(f)
+}
 
 type SubscribeMessage struct {
 	Call   string   `json:"call"`
@@ -53,6 +69,10 @@ func main() {
 		defer close(done)
 		wasActive := false
 		lastZoneName := ""
+		
+		var zonePlayers map[string]*PlayerStats
+		var zoneDuration int64
+		var zoneEncounterID string
 
 		for {
 			log.Printf("Connecting to %s", u)
@@ -137,12 +157,30 @@ func main() {
 						zoneName = "Unknown Zone"
 					}
 					if zoneName != lastZoneName {
+						// Save previous zone's accumulated encounter if we have any
+						if len(zonePlayers) > 0 && lastZoneName != "" {
+							durationStr := fmt.Sprintf("%02d:%02d", zoneDuration/60, zoneDuration%60)
+							for playerName, stats := range zonePlayers {
+								dps := "0.00"
+								if zoneDuration > 0 {
+									dps = fmt.Sprintf("%.2f", float64(stats.Damage)/float64(zoneDuration))
+								}
+								err = insertEncounter(&db, &cfg.Database, zoneEncounterID, lastZoneName, durationStr, playerName, stats.Job, dps, fmt.Sprintf("%d", stats.Healed), fmt.Sprintf("%d", stats.DamageTaken), fmt.Sprintf("%d", stats.Deaths))
+								if err != nil {
+									log.Printf("Failed to insert accumulated encounter for %s: %v", playerName, err)
+								}
+							}
+						}
+
 						err = insertTravelLog(&db, &cfg.Database, zoneID, zoneName)
 						if err != nil {
 							log.Printf("Failed to insert travel log: %v", err)
-						} else {
-							lastZoneName = zoneName
 						}
+						
+						lastZoneName = zoneName
+						zoneEncounterID = fmt.Sprintf("%d", time.Now().UnixNano())
+						zonePlayers = make(map[string]*PlayerStats)
+						zoneDuration = 0
 					}
 				} else if eventType == "CombatData" {
 					isActiveRaw := data["isActive"]
@@ -158,10 +196,24 @@ func main() {
 						encounter, _ := data["Encounter"].(map[string]interface{})
 						combatant, _ := data["Combatant"].(map[string]interface{})
 
-						title, _ := encounter["title"].(string)
-						duration, _ := encounter["duration"].(string)
+						// add to zoneDuration
+						durationRaw, _ := encounter["DURATION"].(string)
+						durationSec, _ := strconv.ParseInt(durationRaw, 10, 64)
+						if durationSec == 0 {
+							// fallback: parse "duration" string like "01:23"
+							durStr, _ := encounter["duration"].(string)
+							parts := strings.Split(durStr, ":")
+							if len(parts) == 2 {
+								m, _ := strconv.ParseInt(parts[0], 10, 64)
+								s, _ := strconv.ParseInt(parts[1], 10, 64)
+								durationSec = m*60 + s
+							}
+						}
+						zoneDuration += durationSec
 
-						encounterID := fmt.Sprintf("%d", time.Now().UnixNano())
+						if zonePlayers == nil {
+							zonePlayers = make(map[string]*PlayerStats)
+						}
 
 						for playerName, playerData := range combatant {
 							pData, ok := playerData.(map[string]interface{})
@@ -172,19 +224,33 @@ func main() {
 							jobRaw, _ := pData["Job"].(string)
 							jobName := JobMap[jobRaw]
 							if jobName == "" {
-								// Try to use the raw job if it's not empty, or leave as is
 								jobName = jobRaw
 							}
 
-							dps, _ := pData["encdps"].(string)
-							healing, _ := pData["healed"].(string)
-							damageTaken, _ := pData["damagetaken"].(string)
-							deaths, _ := pData["deaths"].(string)
+							damageStr, _ := pData["damage"].(string)
+							healedStr, _ := pData["healed"].(string)
+							damageTakenStr, _ := pData["damagetaken"].(string)
+							deathsStr, _ := pData["deaths"].(string)
 
-							err = insertEncounter(&db, &cfg.Database, encounterID, title, duration, playerName, jobName, dps, healing, damageTaken, deaths)
-							if err != nil {
-								log.Printf("Failed to insert encounter for %s: %v", playerName, err)
+							damage := parseInt(damageStr)
+							healed := parseInt(healedStr)
+							damageTaken := parseInt(damageTakenStr)
+							deaths := parseInt(deathsStr)
+
+							stats, exists := zonePlayers[playerName]
+							if !exists {
+								stats = &PlayerStats{Job: jobName}
+								zonePlayers[playerName] = stats
 							}
+							
+							if jobName != "" {
+								stats.Job = jobName
+							}
+
+							stats.Damage += damage
+							stats.Healed += healed
+							stats.DamageTaken += damageTaken
+							stats.Deaths += deaths
 						}
 					} else if isActive {
 						// Combat is currently active
