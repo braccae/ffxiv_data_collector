@@ -54,6 +54,14 @@ On the first launch, the application will automatically generate a default `conf
 }
 ```
 
+### Environment Variables
+
+You can override the configuration file values by setting the following environment variables. This is particularly useful when running the application in a Docker container.
+
+- `FFXIV_DB_TYPE`: Overrides `database.type`
+- `FFXIV_DB_DSN`: Overrides `database.dsn`
+- `FFXIV_WS_URL`: Overrides `websocket_url`
+
 ## Database Connection Settings
 
 The collector relies on standard SQL drivers. You can configure it to connect to different engines by modifying the `"type"` and `"dsn"` (Data Source Name) fields in your `config.json`.

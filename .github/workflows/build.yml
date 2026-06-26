@@ -54,7 +54,12 @@ jobs:
           OUTPUT_NAME="${OUTPUT_NAME}.exe"
         fi
         
-        go build -v -o "$OUTPUT_NAME" .
+        if [ "$GOOS" = "linux" ]; then
+          # Explicitly build static binary for Linux scratch containers
+          go build -v -a -tags netgo -ldflags '-extldflags "-static"' -o "$OUTPUT_NAME" .
+        else
+          go build -v -o "$OUTPUT_NAME" .
+        fi
       shell: bash
 
     - name: Upload Artifact

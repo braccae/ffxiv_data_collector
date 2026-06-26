@@ -83,6 +83,7 @@ func loadConfig(portable bool) (*Config, error) {
 			return nil, fmt.Errorf("failed to write default config: %v", err)
 		}
 
+		applyEnvOverrides(defaultConfig)
 		return defaultConfig, nil
 	}
 
@@ -97,5 +98,18 @@ func loadConfig(portable bool) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config: %v", err)
 	}
 
+	applyEnvOverrides(&cfg)
 	return &cfg, nil
+}
+
+func applyEnvOverrides(cfg *Config) {
+	if dbType := os.Getenv("FFXIV_DB_TYPE"); dbType != "" {
+		cfg.Database.Type = dbType
+	}
+	if dbDsn := os.Getenv("FFXIV_DB_DSN"); dbDsn != "" {
+		cfg.Database.DSN = dbDsn
+	}
+	if wsUrl := os.Getenv("FFXIV_WS_URL"); wsUrl != "" {
+		cfg.WebSocketURL = wsUrl
+	}
 }
