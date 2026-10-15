@@ -85,7 +85,7 @@ jobs:
           merge-multiple: true
           
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           # Use the tag name if pushed, otherwise generate a development release name
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v0.0.{0}-alpha', github.run_number) }}
